@@ -7,54 +7,38 @@ from simulator import Simulator
 class LearningAgent(Agent):
     """An agent that learns to drive in the smartcab world."""
 
-    def __init__(self, env, alpha_vals=None,learning_rate_vals=None):
+    def __init__(self, env, gamma_vals=None,learning_rate_vals=None):
         super(LearningAgent, self).__init__(env)  # sets self.env = env, state = None, next_waypoint = None, and a default color
         self.color = 'red'  # override color
         self.planner = RoutePlanner(self.env, self)  # simple route planner to get next_waypoint
         
         self.runs_per_param = 20
         self.params_tested = -1
-        self.alpha_idx = 0
+        self.gamma_idx = 0
         self.report_file= open("report.txt","w")
         self.learning_rate_idx = -1
-        if(alpha_vals == None):
-            self.alpha_vals = [0.8, 0.5,0.1,0.01,0.001, 0]
+        if(gamma_vals == None):
+            self.gamma_vals = [0.8, 0.5,0.1,0.01,0.001, 0]
         if(learning_rate_vals == None):
             self.learning_rate_vals = [1,0.8,0.5,0.3,0.1,0]
 
-        self.runs = 0
-        self.steps = 0        
-        self.state = None
-        self.runs_with_current_param = 0
-        self.steps_with_current_param = 0
-        self.initialize_params()
-        
-        self.runs_before_in_time = 0
 
-        """ @property state: The current state. The possible states are : 
-        green_light_cant_left, green_light_can_left, red_light_cant_right, red_light_can_right.
+        self.runs = 0        
+        self.steps = 0        
+        
+        self.state = None
+        """ @property state: The current state. 
 
         @type state: str """
         
-        self.state_factory = StateFactory()
-        """ @property state_factory: It will map from inputs to state. @type state_factory: StateFactory """
-
-        self.utilities = self.init_utilities()
-        """ @property utilities: A map of state to utility. @type utilities: dict"""
+        self.runs_with_current_param = 0
+        self.steps_with_current_param = 0
+        self.test_next_param()
+        
+        self.runs_before_in_time = 0                            
         # TODO: Initialize any additional variables here
 
-
-    def init_utilities(self):
-        utilities = {}
-        for state in States.values():
-            utilities[state] = {
-                "forward" : 0,
-                "left" : 0,
-                "right" : 0,
-                "put" : 0
-            }
-        return utilities
-
+    
 
     def reset(self, destination=None):
         self.planner.route_to(destination)
@@ -68,27 +52,27 @@ class LearningAgent(Agent):
 
         if(self.runs % self.runs_per_param == 0 and self.runs != 0):
             self.print_report()            
-            self.initialize_params()
+            self.test_next_param()
 
         self.runs += 1
             
-    def initialize_params(self):
+    def test_next_param(self):
 
         self.params_tested += 1
         self.learning_rate_idx += 1
 
         if(self.learning_rate_idx >= len(self.learning_rate_vals)):
             self.learning_rate_idx = 0
-            self.alpha_idx += 1
+            self.gamma_idx += 1
                     
 
-        if(self.alpha_idx >= len(self.alpha_vals)):
-            print("Its over, thankyou")
+        if(self.gamma_idx >= len(self.gamma_vals)):
+            print("Its over, thank you")
             self.report_file.close()
             exit()
 
         
-        self.alpha = self.alpha_vals[self.alpha_idx]
+        self.gamma = self.gamma_vals[self.gamma_idx]
         self.runs_before_in_time = 0
         self.learning_rate = self.learning_rate_vals[self.learning_rate_idx]
 
@@ -99,16 +83,39 @@ class LearningAgent(Agent):
         self.runs_with_current_param = 0
         self.in_time = 0
         self.net_rewards = 0
-        self.invalid_steps = 0
-        self.max_steps = 100000000
+        self.invalid_steps = 0        
         self.invalid_steps_after_policy_learnt = 0        
-        self.init_utilities()
+
+        self.utilities = {}
+        """ @property utilities: A dictuonary of states to utilities. @type utilities: dict"""
         
+
+    def get_best_action(self, state): 
+
+        if(state not in self.utilities):
+            self.utilities[state] = {
+                "forward" : 0,
+                "left" : 0,
+                "right" : 0,
+                "put" : 0
+            }
+
+
+        action_to_utility =  self.utilities[state]
+
+        best_action_val = max(action_to_utility.iteritems(), key=operator.itemgetter(1)) 
+
+        best_action_val = best_action_val[1] if len(best_action_val) > 0 else 0
+
+        all_maxs_actions = [i for i, j in action_to_utility.items() if j == best_action_val]        
+
+        
+        return random.choice(all_maxs_actions)        
 
     def print_report(self):
 
         self.report_file.write("**************************************************" + "\n")
-        self.report_file.write("{} Steps completed for params Alpha={}, learning_rate={} : ".format(self.steps_with_current_params ,self.alpha, self.learning_rate) + "\n")        
+        self.report_file.write("{} Steps completed for params gamma={}, learning_rate={} : ".format(self.steps_with_current_params ,self.gamma, self.learning_rate) + "\n")        
         self.report_file.write("Net Reward Postive Runs/ Runs with params : {}".format(float(self.net_reward_positive_runs) / self.runs_with_current_param) + "\n" )
         self.report_file.write("Invalid Steps with params / Steps with params: {}".format(float(self.invalid_steps) / self.steps_with_current_params) + "\n")
         self.report_file.write("Invalid Steps after policy learnt / Steps with params: {}".format(float(self.invalid_steps_after_policy_learnt) / (self.steps_with_current_params - self.steps_before_in_time) ) + "\n")
@@ -131,19 +138,11 @@ class LearningAgent(Agent):
         self.steps+= 1
         self.steps_with_current_params +=1
         # TODO: Update state
-        self.state = self.state_factory.map_state(self.next_waypoint, inputs)
+        self.state = (self.next_waypoint, str(inputs))
+
         
         # TODO: Select action according to your policy
-        actionToUtility = self.utilities[self.state]
-
-        bestActionVal = max(actionToUtility.iteritems() ,key=operator.itemgetter(1)) 
-
-        bestActionVal = bestActionVal[1] if len(bestActionVal) > 0 else 0
-
-        allMaxsActions = [i for i, j in actionToUtility.items() if j == bestActionVal]        
-
-        
-        action = random.choice(allMaxsActions)        
+        action = self.get_best_action(self.state)
 
         
         # Execute action and get reward
@@ -168,72 +167,19 @@ class LearningAgent(Agent):
         if(self.in_time == 1):
             self.steps_before_in_time = self.steps_with_current_params
 
+        future_input = self.env.sense(self)
+        future_waypoint = self.planner.next_waypoint()
+        future_state =  (self.next_waypoint, str(inputs))
+        future_best_action = self.get_best_action(future_state)
 
-        # TODO: Learn policy based on state, action, reward
-        qUpdate = reward + self.alpha * sum(actionToUtility.values())
-        actionToUtility[action] = (1-self.learning_rate) * actionToUtility[action] + self.learning_rate * qUpdate
+
+        # TODO: Learn policy based on state, action, reward        
+        q_update = reward + self.gamma * self.utilities[future_state][future_best_action]
+        self.utilities[self.state][action] = (1-self.learning_rate) * self.utilities[self.state][action] + self.learning_rate * q_update
         print "LearningAgent.update(): deadline = {}, way_point = {}, state = {}, inputs = {}, action = {}, reward = {}".format(deadline, self.next_waypoint, self.state, inputs, action, reward)  # [debug]
-        print "utilities[{}] = {}".format(action, actionToUtility[action])  # [debug]
+        print "utilities[{}] = {}".format(action, self.utilities[self.state][action])  # [debug]
 
         
-
-
-
-class States(object):
-    green_light_cant_left_forward = "green_light_cant_left_forward"  
-    green_light_cant_left_left ="green_light_cant_left_left"
-    green_light_cant_left_right ="green_light_cant_left_right"
-
-    green_light_can_left_forward ="green_light_can_left_forward"
-    green_light_can_left_left ="green_light_can_left_left"
-    green_light_can_left_right ="green_light_can_left_right"
-
-    red_light_cant_right_forward ="red_light_cant_right_forward"
-    red_light_cant_right_left ="red_light_cant_right_left"
-    red_light_cant_right_right ="red_light_cant_right_right"
-
-
-    red_light_can_right_forward ="red_light_can_right_forward"
-    red_light_can_right_left ="red_light_can_right_left"
-    red_light_can_right_right ="red_light_can_right_right"
-
-    @staticmethod
-    def values():
-        for key, val in States.__dict__.items():
-            if(key.startswith("_")):
-                continue
-            yield val
-
-class StateFactory(object):
-    """ This class will map the inputs to one of the states."""    
-
-    def map_state(self, next_waypoint, inputs):
-        possible_states = []
-
-        if(inputs['light'] == "green"):
-
-            factory = GreenLightFactory() 
-        else:
-            factory = RedLightFactory()  
-
-        return factory.map_state(inputs) + "_" + next_waypoint
-
-class GreenLightFactory(object):
-    def map_state(self,inputs):            
-
-            if(inputs['oncoming'] != "forward"):
-                return "green_light_can_left"
-            else:
-                return "green_light_cant_left"
-
-
-class RedLightFactory(object):
-    def map_state(self,inputs):            
-            if(inputs['left'] != "forward" and inputs['oncoming'] != "left"):
-                return "red_light_can_right"                
-            else:
-                return "red_light_cant_right"
-
 def run():
     """Run the agent for a finite number of trials."""
 
